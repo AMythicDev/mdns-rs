@@ -6,6 +6,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     thread,
 };
+use tracing::{info, warn};
 
 const MDNS_PORT: u16 = 5353;
 const MDNS_ADDR_V4: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
@@ -17,8 +18,8 @@ pub struct PeerDaemon {
 
 impl PeerDaemon {
     pub fn new() -> Self {
+        info!("starting the mDNS daemon");
         let interfaces = make_interface_socket_map();
-        println!("{:?}", interfaces);
         // Self::start_daemon(socket);
         Self { interfaces }
     }
@@ -58,32 +59,68 @@ fn make_interface_socket_map() -> HashMap<Interface, Socket> {
         let sock = match ip {
             IpAddr::V4(ip) => {
                 let addr = SocketAddrV4::new(Ipv4Addr::new(0, 0, 0, 0), MDNS_PORT);
-                let sock = udp_socket(addr.into()).unwrap();
+                let sock = match udp_socket(addr.into()) {
+                    Ok(sock) => sock,
+                    Err(e) => {
+                        warn!("failed to bind socket for '{}' due to {e}", ip);
+                        continue;
+                    }
+                };
 
                 // Join mDNS group to receive packets.
-                sock.join_multicast_v4(&MDNS_ADDR_V4, ip).unwrap();
+                if let Err(e) = sock.join_multicast_v4(&MDNS_ADDR_V4, ip) {
+                    warn!(
+                        "socket with address {} failed to join multicast group due to {e}",
+                        ip
+                    );
+                    continue;
+                }
 
                 // Set IP_MULTICAST_IF to send packets.
-                sock.set_multicast_if_v4(ip).unwrap();
+                if let Err(e) = sock.set_multicast_if_v4(ip) {
+                    warn!(
+                        "socket with address {} failed to set to multicast  due to {e}",
+                        ip
+                    );
+                    continue;
+                }
                 let multicast_addr = SocketAddrV4::new(MDNS_ADDR_V4, MDNS_PORT).into();
                 sock.send_to(b"Hello World", &multicast_addr).unwrap();
                 sock
             }
-            IpAddr::V6(_ip) => {
+            IpAddr::V6(ip) => {
                 let addr =
                     SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0), MDNS_PORT, 0, 0);
-                let sock = udp_socket(addr.into()).unwrap();
+                let sock = match udp_socket(addr.into()) {
+                    Ok(sock) => sock,
+                    Err(e) => {
+                        warn!("failed to bind socket for '{}' due to {e}", ip);
+                        continue;
+                    }
+                };
 
                 // Join mDNS group to receive packets.
-                sock.join_multicast_v6(&MDNS_ADDR_V6, interface.index.unwrap_or(0))
-                    .unwrap();
+                if let Err(e) = sock.join_multicast_v6(&MDNS_ADDR_V6, interface.index.unwrap_or(0))
+                {
+                    warn!(
+                        "socket with address {} failed to join multicast group due to {e}",
+                        ip
+                    );
+                    continue;
+                }
 
                 // Set IP_MULTICAST_IF to send packets.
-                sock.set_multicast_if_v6(interface.index.unwrap_or(0))
-                    .unwrap();
+                if let Err(e) = sock.set_multicast_if_v6(interface.index.unwrap_or(0)) {
+                    warn!(
+                        "socket with address {} failed to set to multicast  due to {e}",
+                        ip
+                    );
+                    continue;
+                }
                 sock
             }
         };
+        info!("registered address {}", ip);
         interfaces.insert(interface, sock);
     }
 
