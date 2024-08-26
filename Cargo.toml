@@ -1,0 +1,8 @@
+[package]
+name = "mdns-rs"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+if-addrs = { version = "0.13.3", features = ["link-local"] }
+socket2 = { version = "0.5.7", features = ["all"] }
